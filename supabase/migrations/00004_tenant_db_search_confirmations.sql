@@ -365,7 +365,7 @@ CREATE POLICY "search_sessions_insert" ON public.search_sessions
 -- Entity definitions: Read for all authenticated
 CREATE POLICY "entity_definitions_read" ON public.entity_definitions
     FOR SELECT TO authenticated
-    USING (yacht_id IS NULL OR yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()));
+    USING (yacht_id IS NULL OR yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()));
 
 -- Intent patterns: Read for all authenticated
 CREATE POLICY "intent_patterns_read" ON public.intent_patterns
@@ -429,9 +429,10 @@ DECLARE
     v_user_id UUID;
     v_yacht_id UUID;
     v_undo_deadline TIMESTAMPTZ;
+    v_kv RECORD;
 BEGIN
     v_user_id := auth.uid();
-    SELECT yacht_id INTO v_yacht_id FROM user_profiles WHERE id = v_user_id;
+    SELECT yacht_id INTO v_yacht_id FROM auth_users_profiles WHERE id = v_user_id;
 
     -- Get template
     SELECT * INTO v_template
@@ -447,10 +448,10 @@ BEGIN
         v_message := v_template.message_template;
 
         -- Simple template variable replacement
-        FOR k, v IN SELECT * FROM jsonb_each_text(p_template_vars)
+        FOR v_kv IN SELECT key, value FROM jsonb_each_text(p_template_vars)
         LOOP
-            v_title := REPLACE(v_title, '{{' || k || '}}', v);
-            v_message := REPLACE(v_message, '{{' || k || '}}', v);
+            v_title := REPLACE(v_title, '{{' || v_kv.key || '}}', v_kv.value);
+            v_message := REPLACE(v_message, '{{' || v_kv.key || '}}', v_kv.value);
         END LOOP;
     END IF;
 
@@ -563,7 +564,7 @@ DECLARE
     v_yacht_id UUID;
 BEGIN
     v_user_id := auth.uid();
-    SELECT yacht_id INTO v_yacht_id FROM user_profiles WHERE id = v_user_id;
+    SELECT yacht_id INTO v_yacht_id FROM auth_users_profiles WHERE id = v_user_id;
 
     INSERT INTO search_sessions (
         yacht_id, user_id, raw_query, detected_intent, intent_confidence,

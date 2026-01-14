@@ -528,75 +528,75 @@ ALTER TABLE public.email_extraction_jobs ENABLE ROW LEVEL SECURITY;
 -- Handover entries: Yacht members can read, create, update (not delete)
 CREATE POLICY "handover_entries_read" ON public.handover_entries
     FOR SELECT TO authenticated
-    USING (yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()));
+    USING (yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()));
 
 CREATE POLICY "handover_entries_insert" ON public.handover_entries
     FOR INSERT TO authenticated
-    WITH CHECK (yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()));
+    WITH CHECK (yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()));
 
 CREATE POLICY "handover_entries_update" ON public.handover_entries
     FOR UPDATE TO authenticated
-    USING (yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()))
-    WITH CHECK (yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()));
+    USING (yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()))
+    WITH CHECK (yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()));
 
 -- NO DELETE on handover_entries - they are immutable truth seeds
 
 -- Handover drafts: Yacht members can read and manage
 CREATE POLICY "handover_drafts_read" ON public.handover_drafts
     FOR SELECT TO authenticated
-    USING (yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()));
+    USING (yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()));
 
 CREATE POLICY "handover_drafts_insert" ON public.handover_drafts
     FOR INSERT TO authenticated
-    WITH CHECK (yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()));
+    WITH CHECK (yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()));
 
 CREATE POLICY "handover_drafts_update" ON public.handover_drafts
     FOR UPDATE TO authenticated
-    USING (yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()));
+    USING (yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()));
 
 -- No delete on SIGNED drafts (enforced in RPC)
 CREATE POLICY "handover_drafts_delete" ON public.handover_drafts
     FOR DELETE TO authenticated
     USING (
-        yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid())
+        yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid())
         AND state IN ('DRAFT', 'IN_REVIEW')
     );
 
 -- Draft sections, items, edits: Cascade from drafts
 CREATE POLICY "draft_sections_all" ON public.handover_draft_sections
     FOR ALL TO authenticated
-    USING (draft_id IN (SELECT id FROM public.handover_drafts WHERE yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid())));
+    USING (draft_id IN (SELECT id FROM public.handover_drafts WHERE yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid())));
 
 CREATE POLICY "draft_items_all" ON public.handover_draft_items
     FOR ALL TO authenticated
-    USING (draft_id IN (SELECT id FROM public.handover_drafts WHERE yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid())));
+    USING (draft_id IN (SELECT id FROM public.handover_drafts WHERE yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid())));
 
 CREATE POLICY "draft_edits_all" ON public.handover_draft_edits
     FOR ALL TO authenticated
-    USING (draft_id IN (SELECT id FROM public.handover_drafts WHERE yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid())));
+    USING (draft_id IN (SELECT id FROM public.handover_drafts WHERE yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid())));
 
 -- Signoffs: Yacht members can read and manage
 CREATE POLICY "signoffs_all" ON public.handover_signoffs
     FOR ALL TO authenticated
-    USING (yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()));
+    USING (yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()));
 
 -- Exports: Yacht members can read and create
 CREATE POLICY "exports_read" ON public.handover_exports
     FOR SELECT TO authenticated
-    USING (yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()));
+    USING (yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()));
 
 CREATE POLICY "exports_insert" ON public.handover_exports
     FOR INSERT TO authenticated
-    WITH CHECK (yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()));
+    WITH CHECK (yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()));
 
 -- Sources and jobs: Yacht members
 CREATE POLICY "sources_all" ON public.handover_sources
     FOR ALL TO authenticated
-    USING (yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()));
+    USING (yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()));
 
 CREATE POLICY "jobs_all" ON public.email_extraction_jobs
     FOR ALL TO authenticated
-    USING (yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid()));
+    USING (yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid()));
 
 -- Service role full access
 CREATE POLICY "handover_entries_service" ON public.handover_entries FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
@@ -637,8 +637,8 @@ DECLARE
     v_entry_id UUID;
 BEGIN
     v_user_id := auth.uid();
-    SELECT yacht_id INTO v_yacht_id FROM user_profiles WHERE id = v_user_id;
-    SELECT role, department INTO v_user_role, v_user_dept FROM user_roles WHERE user_id = v_user_id AND is_active = TRUE LIMIT 1;
+    SELECT yacht_id INTO v_yacht_id FROM auth_users_profiles WHERE id = v_user_id;
+    SELECT role, department INTO v_user_role, v_user_dept FROM auth_users_roles WHERE user_id = v_user_id AND is_active = TRUE LIMIT 1;
 
     INSERT INTO handover_entries (
         yacht_id, created_by_user_id, created_by_role, created_by_department,
@@ -684,7 +684,7 @@ DECLARE
     v_title TEXT;
 BEGIN
     v_user_id := auth.uid();
-    SELECT yacht_id INTO v_yacht_id FROM user_profiles WHERE id = v_user_id;
+    SELECT yacht_id INTO v_yacht_id FROM auth_users_profiles WHERE id = v_user_id;
 
     v_title := COALESCE(p_title, COALESCE(p_department, 'General') || ' Handover - ' || TO_CHAR(p_period_end, 'YYYY-MM-DD'));
 
@@ -719,8 +719,8 @@ DECLARE
     v_doc_hash TEXT;
 BEGIN
     v_user_id := auth.uid();
-    SELECT yacht_id INTO v_yacht_id FROM user_profiles WHERE id = v_user_id;
-    SELECT role INTO v_user_role FROM user_roles WHERE user_id = v_user_id AND is_active = TRUE LIMIT 1;
+    SELECT yacht_id INTO v_yacht_id FROM auth_users_profiles WHERE id = v_user_id;
+    SELECT role INTO v_user_role FROM auth_users_roles WHERE user_id = v_user_id AND is_active = TRUE LIMIT 1;
 
     -- Check draft state
     SELECT state INTO v_draft_state FROM handover_drafts WHERE id = p_draft_id AND yacht_id = v_yacht_id;
@@ -789,8 +789,8 @@ DECLARE
     v_has_critical BOOLEAN;
 BEGIN
     v_user_id := auth.uid();
-    SELECT yacht_id INTO v_yacht_id FROM user_profiles WHERE id = v_user_id;
-    SELECT role INTO v_user_role FROM user_roles WHERE user_id = v_user_id AND is_active = TRUE LIMIT 1;
+    SELECT yacht_id INTO v_yacht_id FROM auth_users_profiles WHERE id = v_user_id;
+    SELECT role INTO v_user_role FROM auth_users_roles WHERE user_id = v_user_id AND is_active = TRUE LIMIT 1;
 
     -- Check draft state
     SELECT state INTO v_draft_state FROM handover_drafts WHERE id = p_draft_id AND yacht_id = v_yacht_id;
@@ -877,7 +877,7 @@ AS $$
 DECLARE
     v_yacht_id UUID;
 BEGIN
-    SELECT yacht_id INTO v_yacht_id FROM user_profiles WHERE id = auth.uid();
+    SELECT yacht_id INTO v_yacht_id FROM auth_users_profiles WHERE id = auth.uid();
 
     RETURN QUERY
     SELECT

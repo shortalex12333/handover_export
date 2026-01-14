@@ -796,14 +796,14 @@ CREATE POLICY "search_profiles_read" ON public.role_search_profiles
     FOR SELECT TO authenticated
     USING (
         yacht_id IS NULL OR
-        yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid())
+        yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid())
     );
 
 CREATE POLICY "handover_buckets_read" ON public.role_handover_buckets
     FOR SELECT TO authenticated
     USING (
         yacht_id IS NULL OR
-        yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid())
+        yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid())
     );
 
 -- Service role full access
@@ -842,10 +842,10 @@ BEGIN
     v_user_id := auth.uid();
 
     -- Get user's yacht and role
-    SELECT yacht_id INTO v_yacht_id FROM user_profiles WHERE id = v_user_id;
+    SELECT yacht_id INTO v_yacht_id FROM auth_users_profiles WHERE id = v_user_id;
 
     SELECT ur.role, COALESCE(ur.department, 'deck') INTO v_role, v_department
-    FROM user_roles ur
+    FROM auth_users_roles ur
     WHERE ur.user_id = v_user_id AND ur.is_active = TRUE
     LIMIT 1;
 

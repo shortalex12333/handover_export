@@ -240,14 +240,14 @@ ALTER TABLE public.ledger_filter_presets ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "ledger_events_read" ON public.ledger_events
     FOR SELECT TO authenticated
     USING (
-        yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid())
+        yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid())
     );
 
 -- Ledger events: Insert allowed (through RPC functions)
 CREATE POLICY "ledger_events_insert" ON public.ledger_events
     FOR INSERT TO authenticated
     WITH CHECK (
-        yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid())
+        yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid())
     );
 
 -- NO UPDATE OR DELETE POLICIES - ledger is immutable!
@@ -256,7 +256,7 @@ CREATE POLICY "ledger_events_insert" ON public.ledger_events
 CREATE POLICY "day_anchors_read" ON public.ledger_day_anchors
     FOR SELECT TO authenticated
     USING (
-        yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid())
+        yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid())
     );
 
 -- Filter presets: User can manage their own
@@ -264,7 +264,7 @@ CREATE POLICY "filter_presets_read" ON public.ledger_filter_presets
     FOR SELECT TO authenticated
     USING (
         user_id = auth.uid() OR
-        yacht_id = (SELECT yacht_id FROM public.user_profiles WHERE id = auth.uid())
+        yacht_id = (SELECT yacht_id FROM public.auth_users_profiles WHERE id = auth.uid())
     );
 
 CREATE POLICY "filter_presets_insert" ON public.ledger_filter_presets
@@ -335,10 +335,10 @@ BEGIN
     v_today := CURRENT_DATE;
 
     -- Get user context
-    SELECT yacht_id INTO v_yacht_id FROM user_profiles WHERE id = v_user_id;
+    SELECT yacht_id INTO v_yacht_id FROM auth_users_profiles WHERE id = v_user_id;
 
     SELECT role, department INTO v_user_role, v_user_department
-    FROM user_roles
+    FROM auth_users_roles
     WHERE user_id = v_user_id AND is_active = TRUE
     LIMIT 1;
 
@@ -454,7 +454,7 @@ DECLARE
 BEGIN
     -- Get user's yacht
     SELECT up.yacht_id INTO v_yacht_id
-    FROM user_profiles up
+    FROM auth_users_profiles up
     WHERE up.id = auth.uid();
 
     RETURN QUERY
@@ -516,7 +516,7 @@ DECLARE
     v_yacht_id UUID;
 BEGIN
     SELECT yacht_id INTO v_yacht_id
-    FROM user_profiles
+    FROM auth_users_profiles
     WHERE id = auth.uid();
 
     RETURN QUERY
@@ -572,7 +572,7 @@ DECLARE
     v_error TEXT;
 BEGIN
     SELECT yacht_id INTO v_yacht_id
-    FROM user_profiles
+    FROM auth_users_profiles
     WHERE id = auth.uid();
 
     -- Iterate through events and verify chain
@@ -628,7 +628,7 @@ DECLARE
     v_summary JSONB;
 BEGIN
     SELECT yacht_id INTO v_yacht_id
-    FROM user_profiles
+    FROM auth_users_profiles
     WHERE id = auth.uid();
 
     SELECT jsonb_build_object(
