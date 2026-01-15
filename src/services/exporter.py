@@ -9,7 +9,6 @@ from uuid import uuid4
 import tempfile
 
 from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -260,6 +259,8 @@ class HandoverExporter:
 
     def _html_to_pdf(self, html_content: str) -> bytes:
         """Convert HTML string to PDF bytes using WeasyPrint"""
+        # Lazy import to avoid dependency issues in test environments
+        from weasyprint import HTML
 
         html = HTML(string=html_content)
         pdf_bytes = html.write_pdf()
