@@ -13,7 +13,7 @@ services:
       - key: LOG_LEVEL
         value: INFO
       - key: PYTHONPATH
-        value: /opt/render/project/src
+        value: /opt/render/project
       - key: MASTER_SUPABASE_URL
         sync: false
       - key: MASTER_SUPABASE_SERVICE_KEY
