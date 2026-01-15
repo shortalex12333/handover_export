@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Master DB
+      - MASTER_SUPABASE_URL=${MASTER_SUPABASE_URL}
+      - MASTER_SUPABASE_SERVICE_KEY=${MASTER_SUPABASE_SERVICE_KEY}
+      - MASTER_SUPABASE_JWT_SECRET=${MASTER_SUPABASE_JWT_SECRET}
+
+      # Tenant DB (Test Yacht)
+      - yTEST_YACHT_001_SUPABASE_URL=${yTEST_YACHT_001_SUPABASE_URL}
+      - yTEST_YACHT_001_SUPABASE_SERVICE_KEY=${yTEST_YACHT_001_SUPABASE_SERVICE_KEY}
+      - yTEST_YACHT_001_SUPABASE_JWT_SECRET=${yTEST_YACHT_001_SUPABASE_JWT_SECRET}
+
+      # Azure OAuth
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
+
+      # OpenAI
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+
+      # App config
+      - LOG_LEVEL=DEBUG
+      - ENVIRONMENT=development
+      - PYTHONPATH=/app/src
+
+    volumes:
+      - ./src:/app/src:ro
+      - ./templates:/app/templates:ro
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  supabase_data:

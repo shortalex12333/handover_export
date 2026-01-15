@@ -25,6 +25,8 @@ from .pipeline.stages import (
     FormatOutputStage,
     ExportStage,
 )
+from .routers import handover_entries, handover_drafts, handover_signoff, handover_exports
+from . import dependencies
 
 # Configure logging
 logging.basicConfig(
@@ -49,14 +51,17 @@ async def lifespan(app: FastAPI):
     # Initialize clients
     if settings.azure:
         _graph_client = GraphClient(settings.azure)
+        dependencies.set_graph_client(_graph_client)
         logger.info("Graph client initialized")
 
     if settings.openai_api_key:
         _openai_client = OpenAIClient(settings.openai_api_key)
+        dependencies.set_openai_client(_openai_client)
         logger.info("OpenAI client initialized")
 
     if settings.test_tenant_supabase:
         _db_client = SupabaseClient(settings.test_tenant_supabase)
+        dependencies.set_db_client(_db_client)
         logger.info("Supabase client initialized")
 
     yield
@@ -71,6 +76,12 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Include routers
+app.include_router(handover_entries.router)
+app.include_router(handover_drafts.router)
+app.include_router(handover_signoff.router)
+app.include_router(handover_exports.router)
 
 
 # Dependency injection

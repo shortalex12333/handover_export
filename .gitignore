@@ -65,3 +65,4 @@ logs/
 *.pdf
 *.html
 !/tests/**/*.html
+.env

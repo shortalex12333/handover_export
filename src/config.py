@@ -6,6 +6,10 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 from functools import lru_cache
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @dataclass
