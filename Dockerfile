@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Application code
 COPY src/ ./src/
-COPY templates/ ./templates/ 2>/dev/null || true
+COPY templates/ ./templates/
 
 # Create non-root user
 RUN useradd -m appuser && chown -R appuser:appuser /app
@@ -33,4 +33,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 EXPOSE 10000
 
 # Run application
-CMD uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-10000}
+CMD ["/bin/sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
