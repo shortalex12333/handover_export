@@ -17,6 +17,7 @@ from ..models.handover import (
 )
 from ..db.supabase_client import SupabaseClient
 from ..dependencies import get_db_client, get_current_user
+from ..services.signoff_manager import SignoffManager
 
 router = APIRouter(prefix="/api/v1/handover/drafts", tags=["Handover Sign-off"])
 
@@ -46,25 +47,36 @@ async def accept_handover_draft(
     if not request.confirmed:
         raise HTTPException(400, "Confirmation flag must be true to accept")
 
-    # In production:
-    # 1. Check draft exists and state = IN_REVIEW
-    # 2. Verify current_user is the outgoing_user_id
-    # 3. Create signoff record
-    # 4. Update draft state to ACCEPTED
-    # 5. Record ledger event
+    # Initialize signoff manager
+    manager = SignoffManager(db)
 
-    signoff_id = UUID("00000000-0000-0000-0000-000000000001")
+    try:
+        # Accept draft
+        signoff_id = await manager.accept_draft(
+            draft_id=str(draft_id),
+            user_id=current_user["id"],
+            comments=request.comments
+        )
 
-    signoff_data = {
-        "id": signoff_id,
-        "draft_id": draft_id,
-        "signoff_type": "outgoing",
-        "user_id": current_user["id"],
-        "signed_at": datetime.now(),
-        "comments": request.comments
-    }
+        # Fetch signoff record
+        result = db.client.table("handover_signoffs") \
+            .select("""
+                *,
+                user:user_profiles(id, full_name)
+            """) \
+            .eq("id", signoff_id) \
+            .single() \
+            .execute()
 
-    return HandoverSignoffResponse(**signoff_data)
+        if not result.data:
+            raise HTTPException(500, "Failed to fetch signoff record")
+
+        return HandoverSignoffResponse(**result.data)
+
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 @router.post("/{draft_id}/sign", response_model=HandoverSignoffResponse)
@@ -93,26 +105,36 @@ async def sign_handover_draft(
     if not request.confirmed:
         raise HTTPException(400, "Confirmation flag must be true to sign")
 
-    # In production:
-    # 1. Check draft exists and state = ACCEPTED
-    # 2. Verify current_user is the incoming_user_id
-    # 3. Create signoff record
-    # 4. Update draft state to SIGNED
-    # 5. Record ledger event
-    # 6. Trigger background export job (optional auto-export)
+    # Initialize signoff manager
+    manager = SignoffManager(db)
 
-    signoff_id = UUID("00000000-0000-0000-0000-000000000002")
+    try:
+        # Countersign draft
+        signoff_id = await manager.countersign_draft(
+            draft_id=str(draft_id),
+            user_id=current_user["id"],
+            comments=request.comments
+        )
 
-    signoff_data = {
-        "id": signoff_id,
-        "draft_id": draft_id,
-        "signoff_type": "incoming",
-        "user_id": current_user["id"],
-        "signed_at": datetime.now(),
-        "comments": request.comments
-    }
+        # Fetch signoff record
+        result = db.client.table("handover_signoffs") \
+            .select("""
+                *,
+                user:user_profiles(id, full_name)
+            """) \
+            .eq("id", signoff_id) \
+            .single() \
+            .execute()
 
-    return HandoverSignoffResponse(**signoff_data)
+        if not result.data:
+            raise HTTPException(500, "Failed to fetch signoff record")
+
+        return HandoverSignoffResponse(**result.data)
+
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 @router.get("/{draft_id}/signoffs", response_model=List[HandoverSignoffResponse])
@@ -127,6 +149,26 @@ async def get_draft_signoffs(
     Returns both outgoing and incoming signoffs with metadata.
     """
 
-    # In production: Query handover_signoffs table
+    # Verify draft exists
+    draft_result = db.client.table("handover_drafts") \
+        .select("id") \
+        .eq("id", str(draft_id)) \
+        .single() \
+        .execute()
 
-    return []
+    if not draft_result.data:
+        raise HTTPException(404, f"Draft {draft_id} not found")
+
+    # Fetch all signoffs for this draft
+    result = db.client.table("handover_signoffs") \
+        .select("""
+            *,
+            user:user_profiles(id, full_name, role)
+        """) \
+        .eq("draft_id", str(draft_id)) \
+        .order("signed_at") \
+        .execute()
+
+    signoffs = [HandoverSignoffResponse(**signoff) for signoff in result.data or []]
+
+    return signoffs

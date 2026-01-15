@@ -4,7 +4,7 @@ Handles draft generation, review, editing, and state transitions
 """
 from typing import List, Optional
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import UUID4
@@ -21,6 +21,7 @@ from ..models.handover import (
 )
 from ..db.supabase_client import SupabaseClient
 from ..dependencies import get_db_client, get_current_user
+from ..services.draft_generator import DraftGenerator
 
 router = APIRouter(prefix="/api/v1/handover/drafts", tags=["Handover Drafts"])
 
@@ -47,28 +48,62 @@ async def generate_handover_draft(
     4. Returns draft in DRAFT state
     """
 
-    # Check for existing active draft
-    # In production: Query database for existing draft
+    # Initialize draft generator
+    generator = DraftGenerator(db)
 
-    # Create new draft
-    draft_id = UUID("00000000-0000-0000-0000-000000000001")
+    # Generate draft
+    draft_id = await generator.generate_draft(
+        yacht_id=current_user["yacht_id"],
+        outgoing_user_id=str(request.outgoing_user_id),
+        incoming_user_id=str(request.incoming_user_id) if request.incoming_user_id else None,
+        period_start=request.period_start,
+        period_end=request.period_end,
+        shift_type=request.shift_type
+    )
 
-    # Mock draft response
-    draft_data = {
-        "id": draft_id,
-        "yacht_id": current_user["yacht_id"],
-        "outgoing_user_id": request.outgoing_user_id,
-        "incoming_user_id": request.incoming_user_id,
-        "period_start": request.period_start or datetime.now(),
-        "period_end": request.period_end or datetime.now(),
-        "shift_type": request.shift_type,
-        "state": HandoverDraftState.DRAFT,
-        "sections": [],
-        "created_at": datetime.now(),
-        "updated_at": datetime.now()
-    }
+    # Fetch created draft
+    result = db.client.table("handover_drafts") \
+        .select("""
+            *,
+            outgoing_user:user_profiles!outgoing_user_id(id, full_name),
+            incoming_user:user_profiles!incoming_user_id(id, full_name)
+        """) \
+        .eq("id", draft_id) \
+        .single() \
+        .execute()
 
-    return HandoverDraftResponse(**draft_data)
+    if not result.data:
+        raise HTTPException(500, "Failed to fetch created draft")
+
+    # Fetch sections
+    sections_result = db.client.table("handover_draft_sections") \
+        .select("id, section_bucket, section_order") \
+        .eq("draft_id", draft_id) \
+        .order("section_order") \
+        .execute()
+
+    sections = []
+    for section in sections_result.data or []:
+        # Fetch items for section
+        items_result = db.client.table("handover_draft_items") \
+            .select("*") \
+            .eq("section_id", section["id"]) \
+            .order("item_order") \
+            .execute()
+
+        sections.append(HandoverDraftSection(
+            id=section["id"],
+            bucket=PresentationBucket(section["section_bucket"]),
+            section_order=section["section_order"],
+            items=[HandoverDraftItem(**item) for item in items_result.data or []]
+        ))
+
+    draft_response = HandoverDraftResponse(
+        **result.data,
+        sections=sections
+    )
+
+    return draft_response
 
 
 @router.get("/{draft_id}", response_model=HandoverDraftResponse)
@@ -87,37 +122,49 @@ async def get_handover_draft(
     - Edit history
     """
 
-    # In production: Fetch from database with joins
-    # For now, return mock data
+    # Fetch draft with user details
+    result = db.client.table("handover_drafts") \
+        .select("""
+            *,
+            outgoing_user:user_profiles!outgoing_user_id(id, full_name),
+            incoming_user:user_profiles!incoming_user_id(id, full_name)
+        """) \
+        .eq("id", str(draft_id)) \
+        .single() \
+        .execute()
 
-    draft_data = {
-        "id": draft_id,
-        "yacht_id": current_user["yacht_id"],
-        "outgoing_user_id": current_user["id"],
-        "incoming_user_id": None,
-        "period_start": datetime.now(),
-        "period_end": datetime.now(),
-        "shift_type": "day",
-        "state": HandoverDraftState.DRAFT,
-        "sections": [
-            {
-                "id": UUID("00000000-0000-0000-0000-000000000001"),
-                "bucket": PresentationBucket.Command,
-                "section_order": 1,
-                "items": []
-            },
-            {
-                "id": UUID("00000000-0000-0000-0000-000000000002"),
-                "bucket": PresentationBucket.Engineering,
-                "section_order": 2,
-                "items": []
-            }
-        ],
-        "created_at": datetime.now(),
-        "updated_at": datetime.now()
-    }
+    if not result.data:
+        raise HTTPException(404, f"Draft {draft_id} not found")
 
-    return HandoverDraftResponse(**draft_data)
+    # Fetch sections
+    sections_result = db.client.table("handover_draft_sections") \
+        .select("id, section_bucket, section_order") \
+        .eq("draft_id", str(draft_id)) \
+        .order("section_order") \
+        .execute()
+
+    sections = []
+    for section in sections_result.data or []:
+        # Fetch items for section
+        items_result = db.client.table("handover_draft_items") \
+            .select("*") \
+            .eq("section_id", section["id"]) \
+            .order("item_order") \
+            .execute()
+
+        sections.append(HandoverDraftSection(
+            id=section["id"],
+            bucket=PresentationBucket(section["section_bucket"]),
+            section_order=section["section_order"],
+            items=[HandoverDraftItem(**item) for item in items_result.data or []]
+        ))
+
+    draft_response = HandoverDraftResponse(
+        **result.data,
+        sections=sections
+    )
+
+    return draft_response
 
 
 @router.post("/{draft_id}/review")
@@ -135,7 +182,31 @@ async def enter_review_state(
     - Enables editing and merging of items
     """
 
-    # In production: Check state, update to IN_REVIEW
+    # Fetch current draft
+    result = db.client.table("handover_drafts") \
+        .select("id, state") \
+        .eq("id", str(draft_id)) \
+        .single() \
+        .execute()
+
+    if not result.data:
+        raise HTTPException(404, f"Draft {draft_id} not found")
+
+    # Validate current state
+    if result.data["state"] != "DRAFT":
+        raise HTTPException(
+            400,
+            f"Cannot enter review from state {result.data['state']}. Must be DRAFT."
+        )
+
+    # Update to IN_REVIEW
+    update_result = db.client.table("handover_drafts") \
+        .update({"state": "IN_REVIEW", "updated_at": datetime.now().isoformat()}) \
+        .eq("id", str(draft_id)) \
+        .execute()
+
+    if not update_result.data:
+        raise HTTPException(500, "Failed to update draft state")
 
     return {
         "success": True,
@@ -167,20 +238,58 @@ async def edit_draft_item(
     - edit_reason: Optional reason for the edit
     """
 
-    # In production: Check state, update item, log edit
+    # Verify draft is in IN_REVIEW state
+    draft_result = db.client.table("handover_drafts") \
+        .select("id, state") \
+        .eq("id", str(draft_id)) \
+        .single() \
+        .execute()
 
-    updated_item = {
-        "id": item_id,
-        "summary_text": edit.edited_text,
-        "item_order": 1,
-        "domain_code": "ENG-01",
-        "is_critical": False,
-        "source_entry_ids": [],
-        "edit_count": 1,
-        "created_at": datetime.now()
-    }
+    if not draft_result.data:
+        raise HTTPException(404, f"Draft {draft_id} not found")
 
-    return HandoverDraftItem(**updated_item)
+    if draft_result.data["state"] != "IN_REVIEW":
+        raise HTTPException(
+            400,
+            f"Cannot edit items in state {draft_result.data['state']}. Must be IN_REVIEW."
+        )
+
+    # Fetch current item
+    item_result = db.client.table("handover_draft_items") \
+        .select("*") \
+        .eq("id", str(item_id)) \
+        .single() \
+        .execute()
+
+    if not item_result.data:
+        raise HTTPException(404, f"Item {item_id} not found")
+
+    current_item = item_result.data
+
+    # Log edit to history table
+    db.client.table("handover_draft_edits").insert({
+        "id": str(uuid4()),
+        "item_id": str(item_id),
+        "editor_user_id": current_user["id"],
+        "original_text": current_item["summary_text"],
+        "edited_text": edit.edited_text,
+        "edit_reason": edit.edit_reason,
+        "created_at": datetime.now().isoformat()
+    }).execute()
+
+    # Update item
+    update_result = db.client.table("handover_draft_items") \
+        .update({
+            "summary_text": edit.edited_text,
+            "edit_count": current_item.get("edit_count", 0) + 1
+        }) \
+        .eq("id", str(item_id)) \
+        .execute()
+
+    if not update_result.data:
+        raise HTTPException(500, "Failed to update item")
+
+    return HandoverDraftItem(**update_result.data[0])
 
 
 @router.post("/{draft_id}/items/merge", response_model=HandoverDraftItem)
@@ -204,20 +313,76 @@ async def merge_draft_items(
     - merged_text: The combined narrative
     """
 
-    # In production: Validate items exist, create merged item, mark originals as merged
+    if len(merge_request.item_ids) < 2:
+        raise HTTPException(400, "Must provide at least 2 items to merge")
 
-    merged_item = {
-        "id": UUID("00000000-0000-0000-0000-000000000099"),
+    # Verify draft is in IN_REVIEW state
+    draft_result = db.client.table("handover_drafts") \
+        .select("id, state") \
+        .eq("id", str(draft_id)) \
+        .single() \
+        .execute()
+
+    if not draft_result.data:
+        raise HTTPException(404, f"Draft {draft_id} not found")
+
+    if draft_result.data["state"] != "IN_REVIEW":
+        raise HTTPException(
+            400,
+            f"Cannot merge items in state {draft_result.data['state']}. Must be IN_REVIEW."
+        )
+
+    # Fetch all items to merge
+    items_result = db.client.table("handover_draft_items") \
+        .select("*") \
+        .in_("id", [str(item_id) for item_id in merge_request.item_ids]) \
+        .execute()
+
+    if not items_result.data or len(items_result.data) != len(merge_request.item_ids):
+        raise HTTPException(404, "One or more items not found")
+
+    items = items_result.data
+
+    # Combine source entry IDs
+    combined_source_ids = []
+    section_id = None
+    is_critical = False
+    domain_code = items[0].get("domain_code")
+
+    for item in items:
+        if section_id is None:
+            section_id = item["section_id"]
+        combined_source_ids.extend(item.get("source_entry_ids", []))
+        if item.get("is_critical"):
+            is_critical = True
+
+    # Create new merged item
+    merged_item_data = {
+        "id": str(uuid4()),
+        "section_id": section_id,
         "summary_text": merge_request.merged_text,
-        "item_order": 1,
-        "domain_code": "ENG-01",
-        "is_critical": False,
-        "source_entry_ids": [],
+        "item_order": items[0]["item_order"],
+        "domain_code": domain_code,
+        "is_critical": is_critical,
+        "source_entry_ids": list(set(combined_source_ids)),
         "edit_count": 0,
-        "created_at": datetime.now()
+        "created_at": datetime.now().isoformat()
     }
 
-    return HandoverDraftItem(**merged_item)
+    insert_result = db.client.table("handover_draft_items") \
+        .insert(merged_item_data) \
+        .execute()
+
+    if not insert_result.data:
+        raise HTTPException(500, "Failed to create merged item")
+
+    # Mark original items as suppressed (soft delete)
+    db.client.table("handover_draft_items") \
+        .update({"is_suppressed": True}) \
+        .in_("id", [str(item_id) for item_id in merge_request.item_ids]) \
+        .execute()
+
+    return HandoverDraftItem(**insert_result.data[0])
 
 
 @router.delete("/{draft_id}/items/{item_id}")
@@ -236,7 +401,40 @@ async def delete_draft_item(
     - Original entry remains in handover_entries table
     """
 
-    # In production: Mark item as suppressed
+    # Verify draft is in IN_REVIEW state
+    draft_result = db.client.table("handover_drafts") \
+        .select("id, state") \
+        .eq("id", str(draft_id)) \
+        .single() \
+        .execute()
+
+    if not draft_result.data:
+        raise HTTPException(404, f"Draft {draft_id} not found")
+
+    if draft_result.data["state"] != "IN_REVIEW":
+        raise HTTPException(
+            400,
+            f"Cannot delete items in state {draft_result.data['state']}. Must be IN_REVIEW."
+        )
+
+    # Verify item exists
+    item_result = db.client.table("handover_draft_items") \
+        .select("id") \
+        .eq("id", str(item_id)) \
+        .single() \
+        .execute()
+
+    if not item_result.data:
+        raise HTTPException(404, f"Item {item_id} not found")
+
+    # Mark as suppressed (soft delete)
+    update_result = db.client.table("handover_draft_items") \
+        .update({"is_suppressed": True}) \
+        .eq("id", str(item_id)) \
+        .execute()
+
+    if not update_result.data:
+        raise HTTPException(500, "Failed to suppress item")
 
     return {
         "success": True,
@@ -262,8 +460,36 @@ async def list_handover_drafts(
     - limit: Max results
     """
 
-    # In production: Query database with filters
-    return []
+    # Build query
+    query = db.client.table("handover_drafts") \
+        .select("""
+            *,
+            outgoing_user:user_profiles!outgoing_user_id(id, full_name),
+            incoming_user:user_profiles!incoming_user_id(id, full_name)
+        """) \
+        .eq("yacht_id", current_user["yacht_id"])
+
+    # Apply state filter if provided
+    if state:
+        query = query.eq("state", state.value)
+
+    # Apply pagination
+    query = query.range(skip, skip + limit - 1) \
+        .order("created_at", desc=True)
+
+    result = query.execute()
+
+    # For list view, return simplified response without sections
+    drafts = []
+    for draft_data in result.data or []:
+        # Create simplified response (sections will be empty for list view)
+        draft_response = HandoverDraftResponse(
+            **draft_data,
+            sections=[]
+        )
+        drafts.append(draft_response)
+
+    return drafts
 
 
 @router.get("/history", response_model=List[HandoverDraftResponse])
@@ -279,5 +505,26 @@ async def get_handover_history(
     Returns only SIGNED and EXPORTED drafts, ordered by period_end DESC
     """
 
-    # In production: Query with state filter and order by
-    return []
+    # Query for SIGNED and EXPORTED drafts
+    result = db.client.table("handover_drafts") \
+        .select("""
+            *,
+            outgoing_user:user_profiles!outgoing_user_id(id, full_name),
+            incoming_user:user_profiles!incoming_user_id(id, full_name)
+        """) \
+        .eq("yacht_id", current_user["yacht_id"]) \
+        .in_("state", ["SIGNED", "EXPORTED"]) \
+        .range(skip, skip + limit - 1) \
+        .order("period_end", desc=True) \
+        .execute()
+
+    # Return simplified response without sections
+    drafts = []
+    for draft_data in result.data or []:
+        draft_response = HandoverDraftResponse(
+            **draft_data,
+            sections=[]
+        )
+        drafts.append(draft_response)
+
+    return drafts

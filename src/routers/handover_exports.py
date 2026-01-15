@@ -7,7 +7,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import UUID4
 
 from ..models.handover import (
@@ -18,6 +18,7 @@ from ..models.handover import (
 )
 from ..db.supabase_client import SupabaseClient
 from ..dependencies import get_db_client, get_current_user
+from ..services.exporter import HandoverExporter
 
 router = APIRouter(prefix="/api/v1/handover", tags=["Handover Exports"])
 
@@ -47,31 +48,49 @@ async def export_handover_draft(
     For email exports, requires recipients array.
     """
 
-    # In production:
-    # 1. Check draft exists and state = SIGNED
-    # 2. Create export record
-    # 3. Trigger background job to generate PDF/HTML
-    # 4. For email type, validate recipients
-    # 5. Return export record
-
     if request.export_type == ExportType.email and not request.recipients:
         raise HTTPException(400, "Recipients required for email export")
 
-    export_id = UUID("00000000-0000-0000-0000-000000000001")
+    # Initialize exporter
+    exporter = HandoverExporter(db)
 
-    # Mock export job
-    # background_tasks.add_task(generate_export, draft_id, export_id, request.export_type)
+    try:
+        # Export based on type
+        if request.export_type == ExportType.pdf:
+            export_id = await exporter.export_to_pdf(
+                draft_id=str(draft_id),
+                yacht_id=current_user["yacht_id"]
+            )
+        elif request.export_type == ExportType.html:
+            export_id = await exporter.export_to_html(
+                draft_id=str(draft_id),
+                yacht_id=current_user["yacht_id"]
+            )
+        elif request.export_type == ExportType.email:
+            export_id = await exporter.export_to_email(
+                draft_id=str(draft_id),
+                yacht_id=current_user["yacht_id"],
+                recipients=request.recipients
+            )
+        else:
+            raise HTTPException(400, f"Unknown export type: {request.export_type}")
 
-    export_data = {
-        "id": export_id,
-        "draft_id": draft_id,
-        "export_type": request.export_type,
-        "file_url": None,  # Will be populated when rendering completes
-        "email_sent_at": None,
-        "created_at": datetime.now()
-    }
+        # Fetch export record
+        result = db.client.table("handover_exports") \
+            .select("*") \
+            .eq("id", export_id) \
+            .single() \
+            .execute()
 
-    return HandoverExportResponse(**export_data)
+        if not result.data:
+            raise HTTPException(500, "Failed to fetch export record")
+
+        return HandoverExportResponse(**result.data)
+
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Export failed: {str(e)}")
 
 
 @router.get("/exports/{export_id}", response_model=HandoverExportResponse)
@@ -89,16 +108,32 @@ async def get_export(
     - Email delivery status (if email)
     """
 
-    # In production: Fetch from database, generate signed URL if needed
+    # Fetch export record
+    result = db.client.table("handover_exports") \
+        .select("*") \
+        .eq("id", str(export_id)) \
+        .single() \
+        .execute()
 
-    export_data = {
-        "id": export_id,
-        "draft_id": UUID("00000000-0000-0000-0000-000000000001"),
-        "export_type": ExportType.pdf,
-        "file_url": "https://storage.example.com/handovers/export-123.pdf",
-        "email_sent_at": None,
-        "created_at": datetime.now()
-    }
+    if not result.data:
+        raise HTTPException(404, f"Export {export_id} not found")
+
+    export_data = result.data
+
+    # If file URL exists and is from Supabase Storage, generate signed URL
+    if export_data.get("file_url") and "supabase" in export_data["file_url"]:
+        # Generate time-limited signed URL (24 hours)
+        try:
+            # Extract path from URL
+            file_path = export_data["file_url"].split("/handovers/")[-1]
+            signed_url = db.client.storage.from_("handover-exports").create_signed_url(
+                f"handovers/{file_path}",
+                expires_in=86400  # 24 hours
+            )
+            export_data["file_url"] = signed_url.get("signedURL", export_data["file_url"])
+        except:
+            # If signed URL generation fails, keep original URL
+            pass
 
     return HandoverExportResponse(**export_data)
 
@@ -115,15 +150,47 @@ async def download_export(
     Returns PDF or HTML file with appropriate content-type.
     """
 
-    # In production:
-    # 1. Fetch export record
-    # 2. Verify file exists in storage
-    # 3. Return file with appropriate headers
+    # Fetch export record
+    result = db.client.table("handover_exports") \
+        .select("*") \
+        .eq("id", str(export_id)) \
+        .single() \
+        .execute()
 
-    raise HTTPException(404, "Export file not found")
+    if not result.data:
+        raise HTTPException(404, f"Export {export_id} not found")
+
+    export_data = result.data
+
+    # Email exports don't have files to download
+    if export_data["export_type"] == "email":
+        raise HTTPException(400, "Email exports cannot be downloaded. Use GET /exports/{id} for email status.")
+
+    # Verify file URL exists
+    if not export_data.get("file_url"):
+        raise HTTPException(404, "Export file not found in storage")
+
+    # For Supabase Storage, generate download URL
+    if "supabase" in export_data["file_url"]:
+        try:
+            file_path = export_data["file_url"].split("/handovers/")[-1]
+            signed_url_response = db.client.storage.from_("handover-exports").create_signed_url(
+                f"handovers/{file_path}",
+                expires_in=3600  # 1 hour for download
+            )
+            download_url = signed_url_response.get("signedURL")
+
+            if download_url:
+                # Redirect to signed URL for download
+                return RedirectResponse(url=download_url)
+        except Exception as e:
+            raise HTTPException(500, f"Failed to generate download URL: {str(e)}")
+
+    # If not Supabase Storage, return the direct URL as redirect
+    return RedirectResponse(url=export_data["file_url"])
 
 
-@router.get("/signed/{draft_id}", response_model=HandoverExportResponse)
+@router.get("/signed/{draft_id}")
 async def get_signed_handover(
     draft_id: UUID4,
     db: SupabaseClient = Depends(get_db_client),
@@ -138,9 +205,63 @@ async def get_signed_handover(
     - Signoff records
     """
 
-    # In production: Fetch draft + signoffs + exports
+    # Fetch draft
+    draft_result = db.client.table("handover_drafts") \
+        .select("""
+            *,
+            outgoing_user:user_profiles!outgoing_user_id(id, full_name, role),
+            incoming_user:user_profiles!incoming_user_id(id, full_name, role)
+        """) \
+        .eq("id", str(draft_id)) \
+        .single() \
+        .execute()
 
-    raise HTTPException(404, "Signed handover not found")
+    if not draft_result.data:
+        raise HTTPException(404, f"Draft {draft_id} not found")
+
+    draft = draft_result.data
+
+    # Verify draft is signed
+    if draft["state"] not in ["SIGNED", "EXPORTED"]:
+        raise HTTPException(400, f"Draft is not signed. Current state: {draft['state']}")
+
+    # Fetch signoffs
+    signoffs_result = db.client.table("handover_signoffs") \
+        .select("""
+            *,
+            user:user_profiles(id, full_name, role)
+        """) \
+        .eq("draft_id", str(draft_id)) \
+        .order("signed_at") \
+        .execute()
+
+    # Fetch exports
+    exports_result = db.client.table("handover_exports") \
+        .select("*") \
+        .eq("draft_id", str(draft_id)) \
+        .order("created_at", desc=True) \
+        .execute()
+
+    # Generate signed URLs for exports
+    exports = []
+    for export in exports_result.data or []:
+        if export.get("file_url") and "supabase" in export["file_url"]:
+            try:
+                file_path = export["file_url"].split("/handovers/")[-1]
+                signed_url_response = db.client.storage.from_("handover-exports").create_signed_url(
+                    f"handovers/{file_path}",
+                    expires_in=86400  # 24 hours
+                )
+                export["file_url"] = signed_url_response.get("signedURL", export["file_url"])
+            except:
+                pass
+        exports.append(export)
+
+    return {
+        "draft": draft,
+        "signoffs": signoffs_result.data or [],
+        "exports": exports
+    }
 
 
 @router.get("/exports", response_model=List[HandoverExportResponse])
@@ -162,5 +283,36 @@ async def list_exports(
     - limit: Max results
     """
 
-    # In production: Query database with filters
-    return []
+    # Build query - filter by yacht_id through draft relationship
+    # First, get draft IDs for this yacht
+    drafts_result = db.client.table("handover_drafts") \
+        .select("id") \
+        .eq("yacht_id", current_user["yacht_id"]) \
+        .execute()
+
+    draft_ids = [draft["id"] for draft in drafts_result.data or []]
+
+    if not draft_ids:
+        return []
+
+    # Build exports query
+    query = db.client.table("handover_exports") \
+        .select("*") \
+        .in_("draft_id", draft_ids)
+
+    # Apply filters
+    if draft_id:
+        query = query.eq("draft_id", str(draft_id))
+
+    if export_type:
+        query = query.eq("export_type", export_type.value)
+
+    # Apply pagination
+    query = query.range(skip, skip + limit - 1) \
+        .order("created_at", desc=True)
+
+    result = query.execute()
+
+    exports = [HandoverExportResponse(**export) for export in result.data or []]
+
+    return exports
