@@ -22,6 +22,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 COPY templates/ ./templates/
 
+# Set Python path
+ENV PYTHONPATH=/app
+
 # Create non-root user
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
