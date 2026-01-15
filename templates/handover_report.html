@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Handover Report - {{ draft.period_end_date }}</title>
+    <style>
+        /* PDF-optimized styling */
+        @page {
+            size: A4;
+            margin: 2cm;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Helvetica', 'Arial', sans-serif;
+            font-size: 11pt;
+            line-height: 1.6;
+            color: #333;
+            background: #fff;
+        }
+
+        .header {
+            border-bottom: 3px solid #1e3a8a;
+            padding-bottom: 15px;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 24pt;
+            color: #1e3a8a;
+            margin-bottom: 10px;
+        }
+
+        .header .meta {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .header .meta-item {
+            padding: 8px;
+            background: #f3f4f6;
+            border-radius: 4px;
+        }
+
+        .header .meta-label {
+            font-weight: bold;
+            color: #6b7280;
+            font-size: 9pt;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .header .meta-value {
+            color: #111827;
+            font-size: 11pt;
+            margin-top: 2px;
+        }
+
+        .section {
+            margin: 40px 0;
+            page-break-inside: avoid;
+        }
+
+        .section-title {
+            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            color: white;
+            padding: 12px 15px;
+            font-size: 14pt;
+            font-weight: bold;
+            border-radius: 6px 6px 0 0;
+            margin-bottom: 0;
+        }
+
+        .section-content {
+            border: 1px solid #e5e7eb;
+            border-top: none;
+            border-radius: 0 0 6px 6px;
+            padding: 15px;
+            background: #fafafa;
+        }
+
+        .item {
+            margin: 15px 0;
+            padding: 12px 15px;
+            background: white;
+            border-left: 4px solid #d1d5db;
+            border-radius: 4px;
+            page-break-inside: avoid;
+        }
+
+        .item.critical {
+            border-left-color: #dc2626;
+            background: #fef2f2;
+        }
+
+        .item.critical::before {
+            content: "⚠ CRITICAL";
+            display: inline-block;
+            background: #dc2626;
+            color: white;
+            font-size: 8pt;
+            font-weight: bold;
+            padding: 2px 8px;
+            border-radius: 3px;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+
+        .item-text {
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .item-meta {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #e5e7eb;
+            font-size: 9pt;
+            color: #6b7280;
+        }
+
+        .item-meta span {
+            display: inline-block;
+            margin-right: 15px;
+        }
+
+        .item-meta .domain-code {
+            background: #dbeafe;
+            color: #1e40af;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-weight: 600;
+        }
+
+        .signoffs {
+            margin-top: 50px;
+            padding-top: 30px;
+            border-top: 3px solid #1e3a8a;
+            page-break-inside: avoid;
+        }
+
+        .signoffs h2 {
+            font-size: 16pt;
+            color: #1e3a8a;
+            margin-bottom: 20px;
+        }
+
+        .signoff {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+        }
+
+        .signoff-type {
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 9pt;
+            color: #6b7280;
+            letter-spacing: 0.5px;
+        }
+
+        .signoff-user {
+            font-size: 13pt;
+            color: #111827;
+            margin: 5px 0;
+        }
+
+        .signoff-role {
+            color: #6b7280;
+            font-style: italic;
+        }
+
+        .signoff-time {
+            font-size: 10pt;
+            color: #9ca3af;
+            margin-top: 5px;
+        }
+
+        .signoff-comments {
+            margin-top: 10px;
+            padding: 10px;
+            background: white;
+            border-left: 3px solid #3b82f6;
+            font-style: italic;
+            color: #374151;
+        }
+
+        .footer {
+            margin-top: 50px;
+            padding-top: 20px;
+            border-top: 1px solid #e5e7eb;
+            font-size: 9pt;
+            color: #9ca3af;
+            text-align: center;
+        }
+
+        .empty-section {
+            padding: 20px;
+            text-align: center;
+            color: #9ca3af;
+            font-style: italic;
+        }
+
+        /* Print-specific */
+        @media print {
+            .section {
+                page-break-after: avoid;
+            }
+
+            .item {
+                page-break-inside: avoid;
+            }
+
+            .signoffs {
+                page-break-before: always;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <h1>🚢 Handover Report</h1>
+
+        <div class="meta">
+            <div class="meta-item">
+                <div class="meta-label">Period</div>
+                <div class="meta-value">
+                    {{ draft.period_start_date }} - {{ draft.period_end_date }}
+                </div>
+            </div>
+
+            <div class="meta-item">
+                <div class="meta-label">Shift Type</div>
+                <div class="meta-value">{{ draft.shift_type | title }}</div>
+            </div>
+
+            <div class="meta-item">
+                <div class="meta-label">Outgoing Officer</div>
+                <div class="meta-value">
+                    {{ draft.outgoing_user.full_name }}
+                    {% if draft.outgoing_user.role %}
+                        <br><small style="color: #6b7280;">{{ draft.outgoing_user.role }}</small>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="meta-item">
+                <div class="meta-label">Incoming Officer</div>
+                <div class="meta-value">
+                    {% if draft.incoming_user %}
+                        {{ draft.incoming_user.full_name }}
+                        {% if draft.incoming_user.role %}
+                            <br><small style="color: #6b7280;">{{ draft.incoming_user.role }}</small>
+                        {% endif %}
+                    {% else %}
+                        <em style="color: #9ca3af;">Not assigned</em>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sections -->
+    {% for section in draft.sections %}
+    <div class="section">
+        <div class="section-title">
+            {{ section.section_bucket | replace('_', ' ') }}
+        </div>
+
+        <div class="section-content">
+            {% if section.items %}
+                {% for item in section.items %}
+                <div class="item {% if item.is_critical %}critical{% endif %}">
+                    <div class="item-text">{{ item.summary_text }}</div>
+
+                    {% if item.domain_code or item.edit_count > 0 %}
+                    <div class="item-meta">
+                        {% if item.domain_code %}
+                        <span class="domain-code">{{ item.domain_code }}</span>
+                        {% endif %}
+
+                        {% if item.edit_count > 0 %}
+                        <span>✏️ Edited {{ item.edit_count }} time{{ 's' if item.edit_count > 1 else '' }}</span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-section">
+                    No items in this section
+                </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+
+    <!-- Sign-offs -->
+    <div class="signoffs">
+        <h2>✍️ Sign-offs</h2>
+
+        {% if draft.signoffs %}
+            {% for signoff in draft.signoffs %}
+            <div class="signoff">
+                <div class="signoff-type">
+                    {{ signoff.signoff_type }} signature
+                </div>
+
+                <div class="signoff-user">
+                    {{ signoff.user.full_name }}
+                    {% if signoff.user.role %}
+                        <span class="signoff-role">({{ signoff.user.role }})</span>
+                    {% endif %}
+                </div>
+
+                <div class="signoff-time">
+                    Signed at: {{ signoff.signed_at }}
+                </div>
+
+                {% if signoff.comments %}
+                <div class="signoff-comments">
+                    "{{ signoff.comments }}"
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-section">
+                No sign-offs recorded
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <p>
+            Generated by CelesteOS Handover System
+            <br>
+            {{ generated_at.strftime('%d %B %Y at %H:%M UTC') }}
+        </p>
+        <p style="margin-top: 10px; font-size: 8pt;">
+            🔒 This document is part of the vessel's permanent record. All sign-offs are cryptographically verified.
+        </p>
+    </div>
+</body>
+</html>
