@@ -2,10 +2,9 @@
 services:
   - type: web
     name: handover-export
-    runtime: python
+    runtime: docker
     plan: starter
-    buildCommand: ./render-build.sh
-    startCommand: python -m uvicorn src.main:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
